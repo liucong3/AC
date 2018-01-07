@@ -1,0 +1,36 @@
+NN:
+(p,v)=f(s)
+
+Simulations:
+- 1,600 simulations for each MCTS (0.4 s thinking time per move)
+- Each simulation starts from the root state and iteratively selects moves that maximize an upper confidence bound Q(s, a) + U(s, a), right-side page 7, until a leaf node s′ is encountered. This leaf position is expanded and evaluated only once by the network to gene­ rate both prior probabilities and evaluation. Then, there is a new V(s′), and each N(s,a) and Q(s,a) along the search path is backup.
+- Compute a vector of search probabilities proportional to 
+ N(s, a)^1/τ
+
+Game termination and score:
+- when both players pass
+- search value drops below a resignation threshold
+- the game exceeds a maximum length
+- scored to give a final reward of r_T ∈ {−1,+1}
+
+Train:
+- data for each time­step t is stored as (s_t, π_t, z_t), where z_t = ±r_T
+- trained from data (s, π, z) sampled uniformly among all time­steps of the last iteration(s) of self­play
+- l=(z−v)^2 − π_T log(p)+c|θ|^2, c = 1e−4
+- a total mini­batch size of 2,048
+- replay buffer: Each mini­batch of data is sampled uniformly at random from all positions of the most recent 500,000 games of self­play
+- stochastic gradient descent with momentum (0.9) and learning rate annealing
+
+Evaluator:
+- using an MCTS with 1,600 simulations to select each move
+- an infinitesimal temperature τ→0:  deterministically select the move with maximum visit count
+-  If the new player wins by a margin of >55%, it becomes the best player αθ∗, and is subse­quently used for self­play generation
+
+Self-play:
+- For the first 30 moves of each game, the temperature is set to τ = 1, this selects moves proportionally to their visit count in MCTS, and ensures a diverse set of positions are encountered. For the remainder of the game, an infinitesimal temperature is used, τ→0
+- exploration: adding Dirichlet noise to the prior probabilities in the root node s0, specifically P(s, a) = (1 − ε)p_a + εη_a, η ∼ Dir(0.03) and ε = 0.25
+-- clearly lost games are resigned
+--- v_resign is selected automatically to keep the fraction of false positives below 5%
+- Expand: d_i is a dihedral reflection or rotation, Positions in the queue are evaluated by the neural network using a mini­batch size of 8
+
+
