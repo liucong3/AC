@@ -23,10 +23,9 @@ class Edge(object):
 		return self.w / self.n
 
 	def u(self, c_puct):
-		sum_n = 0
+		sum_n = 1
 		for e in self.prev_node.next_edges.values():
 			sum_n += e.n
-		if sum_n == 0: sum_n == 1
 		import math
 		return c_puct * self.p * math.sqrt(sum_n) / (1 + self.n)
 
@@ -88,7 +87,10 @@ class Tree(object):
 		for action, edge in self.root_node.next_edges.items():
 			(x, y), a = action
 			# print '>', action, edge.n, edge.next_node is not None
-			policy[a, x, y] = edge.n
+			n = edge.n
+			if edge.next_node is not None and edge.next_node.s.is_terminated():
+				n += args().search_simulations # winning edge is assigned a large virtual n
+			policy[a, x, y] = n 
 		return policy
 
 	def _expand_nodes(self, batch):
@@ -100,7 +102,6 @@ class Tree(object):
 		p, v = model_predict(self.model, x, False, is_cuda, self.gpu_id)
 		p = [ x.squeeze(0) for x in p.chunk(batch_size) ]
 		v = [ x.squeeze(0) for x in v.chunk(batch_size) ]
-
 		for i in range(batch_size):
 			node = batch[i]
 			node.expand(p[i], v[i])
@@ -110,7 +111,6 @@ class Tree(object):
 		if node.next_edges is None: # the node has not been expanded
 			return None
 		if node.s.is_terminated(): # terminated node should not be searched
-			node._propagate_w_backward(node.v)
 			return None
 		edges = list(node.next_edges.values())
 		edges.sort(key=lambda e: e.q() + e.u(self.c_puct), reverse=True)
@@ -142,11 +142,15 @@ def _mcts_policy(node, model, gpu_id, tau):
 	policy = policy / policy.sum()
 	return policy
 
-def _next_action(board, policy, noice_ratio):
-	if noice_ratio > 0:
-		noice = torch.rand(policy.size())
-		noice = noice * (noice_ratio / noice.sum())
-		policy = policy * (1 - noice_ratio) + noice
+def _next_action(board, policy, noise_ratio):
+	if noise_ratio > 0:
+		noise = torch.rand(policy.size()) * (policy > 0).float()
+		sum1 = noise.sum()
+		if sum1 != 0:
+			noise = noise * (noise_ratio / noise.sum())
+		else:
+			print(policy) # strange things happend
+		policy = policy * (1 - noise_ratio) + noise
 	actions, policy = board.nn_actions(policy)
 	import numpy
 	policy = numpy.array(policy)
