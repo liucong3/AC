@@ -68,7 +68,11 @@ class AlphaGoModel(nn.Module):
 	def forward(self, x):
 		x = self.conv_in(x)
 		x = self.residual_blocks(x)
-		p = F.softmax(self.policy_head(x))
+		p = self.policy_head(x)
+		p_size = p.size()
+		p = p.view(p_size[0], -1)
+		p = F.softmax(p, dim=1)
+		p = p.view(p_size)
 		v = self.value_head(x)
 		return p, v
 
