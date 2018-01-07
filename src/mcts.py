@@ -37,6 +37,7 @@ class Node(object):
 		self.prev_edge = prev_edge
 		self.next_edges = None
 		self.n = 0
+		self.v = None
 
 	def expand(self, p, v):
 		self.next_edges = {}
@@ -80,7 +81,10 @@ class Tree(object):
 				if len(batch) == 0: break
 				self._expand_nodes(batch)
 				batch = []
-		return self._get_policy()
+		policy = self._get_policy()
+		if policy.sum() == 0:
+			self._print_tree(self.root_node, '')
+		return policy
 
 	def _get_policy(self):
 		policy = torch.zeros(*self.model.policy_size)
@@ -125,6 +129,25 @@ class Tree(object):
 				return to_expand
 		return None
 
+	def _print_tree(self, node, indent):
+		import json
+		print(indent + 'board: ' + json.dumps(node.s.state_dict()))
+		print(indent + 'is_terminated: ' + str(node.s.is_terminated()))
+		print(indent + 'n: ' + str(node.n))
+		print(indent + 'v: ' + str(node.v))
+		if node.next_edges is None:
+			print(indent + 'next_edges: None')
+			return
+		if len(node.next_edges) == 0:
+			print(indent + 'next_edges: {}')
+			return
+		act_list = node.s.action_list()
+		for a in node.next_edges:
+			(pos, action) = a
+			edge = node.next_edges[a]
+			print(indent + str(pos) + ' ' + str(act_list[action]) + ' -> ' + ('next_node: None' if edge.next_node is None else '') + '    n:' + str(edge.n) + ' w:' + str(edge.w) + ' p:' + str(edge.p))
+			if edge.next_node is None: continue
+			self._print_tree(edge.next_node, indent + '    ')
 
 
 

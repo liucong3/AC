@@ -19,7 +19,7 @@ exploration_iters = 0
 
 def exploration_thread_func():
 	from mcts import exploration
-	global best_model, model_lock, gpu_mapping, logger
+	global best_model, model_lock, gpu_mapping, logger, exploration_iters
 	thread_name = threading.currentThread().name
 	gpu_id = gpu_mapping[thread_name]
 	last_best_model = None
@@ -33,6 +33,7 @@ def exploration_thread_func():
 			if has_cuda:
 				torch.cuda.synchronize()
 			best_model_lock.release()
+			logger.info('Exploration %d %s %s@GPU%d model updated' % (exploration_iters, misc.datetimestr(), thread_name, gpu_id))
 		history, _, _ = exploration(ccboard.ChessBoard(), [exp_model, exp_model], gpu_id, policy_noise_ratio=args().policy_noise_ratio)
 		replay_buffer_lock.acquire()
 		for h in history:
@@ -40,7 +41,6 @@ def exploration_thread_func():
 		while len(replay_buffer) > args().replay_buffer_size:
 			replay_buffer.pop(0)
 		replay_buffer_lock.release()
-		global exploration_iters
 		exploration_iters += 1
 		logger.info('Exploration %d %s %s@GPU%d buffer_size:%d' % (exploration_iters, misc.datetimestr(), thread_name, gpu_id, len(replay_buffer)))
 
