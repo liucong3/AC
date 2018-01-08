@@ -39,17 +39,15 @@ class Node(object):
 		self.n = 0
 		self.v = None
 
-	def expand(self, p, v):
+	def expand(self, p, actions, v):
 		self.next_edges = {}
-		self.v = v[0]
+		self.v = v
 		if self.s.is_terminated():
 			if self.s.is_winner(): raise
 			self.v = -1
 		else:
-			actions, p = self.s.nn_actions(p) # [ (pos, action), ... ]
-			for i in range(len(actions)):
-				action = actions[i]
-				self.next_edges[action] = Edge(self, action, p[i])
+			for a1, p1 in zip(actions, p):
+				self.next_edges[a1] = Edge(self, a1, p1)
 		self._propagate_w_backward(self.v)
 
 	def _propagate_w_backward(self, v):
@@ -81,34 +79,33 @@ class Tree(object):
 				if len(batch) == 0: break
 				self._expand_nodes(batch)
 				batch = []
-		policy = self._get_policy()
-		if policy.sum() == 0:
-			self._print_tree(self.root_node, '')
-		return policy
+		return self._get_policy()
 
 	def _get_policy(self):
-		policy = torch.zeros(*self.model.policy_size)
+		policy = []
+		actions = []
 		for action, edge in self.root_node.next_edges.items():
 			(x, y), a = action
 			# print '>', action, edge.n, edge.next_node is not None
 			n = edge.n
+			if n == 0: continue
 			if edge.next_node is not None and edge.next_node.s.is_terminated():
 				n += args().search_simulations # winning edge is assigned a large virtual n
-			policy[a, x, y] = n 
-		return policy
+			policy.append(n)
+			actions.append(action)
+		return policy, actions
 
 	def _expand_nodes(self, batch):
 		batch_size = len(batch)
-		repr_list = torch.stack([node.s.nn_board_repr() for node in batch])
+		x = torch.stack([node.s.nn_board_repr() for node in batch])
+		valid_actions = [node.s.nn_valid_actions() for node in batch]
+		valid_actions, valid_action_indexes = zip(*valid_actions)
 		is_cuda = torch.cuda.is_available()
-		from helper import stack_input, model_predict
-		x = stack_input(repr_list)
-		p, v = model_predict(self.model, x, False, is_cuda, self.gpu_id)
-		p = [ x.squeeze(0) for x in p.chunk(batch_size) ]
-		v = [ x.squeeze(0) for x in v.chunk(batch_size) ]
+		from helper import model_predict_eval
+		p, v = model_predict_eval(self.model, x, valid_action_indexes, is_cuda, self.gpu_id)
 		for i in range(batch_size):
 			node = batch[i]
-			node.expand(p[i], v[i])
+			node.expand(p[i], valid_actions[i], v[i])
 
 	# Returns a node to expand, None if no node to expand
 	def _search_node(self, node):
@@ -157,33 +154,27 @@ def default_tau_func(step):
 # returns a normalized policy
 def _mcts_policy(node, model, gpu_id, tau):
 	tree = Tree(node, model, gpu_id, args().c_puct)
-	policy = tree.search(args().search_batch_size, args().search_simulations)
+	policy, actions = tree.search(args().search_batch_size, args().search_simulations)
+	policy = torch.Tensor(policy)
 	if tau == 0:
 		policy = (policy == policy.max()).type_as(policy)
 	else:
 		policy = policy.pow(1 / tau)
 	policy = policy / policy.sum()
-	return policy
+	return policy, actions
 
-def _next_action(board, policy, noise_ratio):
+def _next_action(board, policy, actions, noise_ratio):
 	if noise_ratio > 0:
-		noise = torch.rand(policy.size()) * (policy > 0).float()
-		sum1 = noise.sum()
-		if sum1 != 0:
-			noise = noise * (noise_ratio / noise.sum())
-		else:
-			print(policy) # strange things happend
+		noise = torch.rand(policy.size())
+		noise = noise * (noise_ratio / noise.sum())
 		policy = policy * (1 - noise_ratio) + noise
-	actions, policy = board.nn_actions(policy)
 	import numpy
-	policy = numpy.array(policy)
+	policy = policy.numpy()
 	sum_ = policy.sum()
-	if sum_ == 0:
-		policy[:] = 1.0 / len(policy)
-	else:
-		policy = policy / float(sum_)
+	policy = policy / sum_
 	policy = policy.tolist()
 	# print policy
+	policy[0] -= (sum(policy) - 1)
 	index = numpy.random.choice(range(len(policy)), size=1, p=policy)[0]
 	# print '>>>>', policy[index]
 	return actions[index]
@@ -196,11 +187,12 @@ class Experience(object):
 		self.v = v
 
 def next_action_for_evaluation(model, board):
-	policy = _mcts_policy(Node(board), model, 0, 0)
-	return _next_action(board, policy, 0)
+	policy, actions = _mcts_policy(Node(board), model, 0, 0)
+	return _next_action(board, policy, actions, 0)
 
 def exploration(board, models, gpu_id, tau_func=default_tau_func, policy_noise_ratio=0, resign=None, logger=None):
 	import misc, json, sys
+	from ccboard import action_index
 	history = []
 	cur_node = Node(board)
 	winner = None
@@ -209,10 +201,10 @@ def exploration(board, models, gpu_id, tau_func=default_tau_func, policy_noise_r
 	for step in range(args().max_game_steps):
 		# misc.progress_bar(step, args().max_game_steps, game_name)
 
-		policy = _mcts_policy(cur_node, models[step % 2], gpu_id, tau_func(step) )
-		pos, action = _next_action(cur_node.s, policy, policy_noise_ratio)
+		policy, actions = _mcts_policy(cur_node, models[step % 2], gpu_id, tau_func(step) )
+		pos, action = _next_action(cur_node.s, policy, actions, policy_noise_ratio)
 		#  history.append( Experience(cur_node.s, policy, cur_node.v) ) # $v$ is here for resignation check later 
-		history.append( Experience(cur_node.s, (pos, action), cur_node.v) )
+		history.append( Experience(cur_node.s, action_index(pos, action), cur_node.v) )
 		if resign is not None and v < resign:
 			winner = (step + 1) % 2 # current player losses 
 			# sys.stderr.write('\n')

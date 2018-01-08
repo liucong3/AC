@@ -29,6 +29,7 @@ class Logger(object):
 
 	# train_info
 
+
 	def _create_train_info(self, args, init_train_info):
 		import json
 		train_info_path = os.path.join(self.logdir, 'train_info.txt')
@@ -76,6 +77,10 @@ class Logger(object):
 		package = torch.load(path, map_location=lambda storage, location: storage)
 		return self._init_model(package['config'], gpu_id, package['state_dict'])
 
+	def get_model_path(self):
+		if 'model_path' not in self.train_info: return None
+		return os.path.join(self.logdir, self.train_info['model_path'])
+
 	def create_model(self, gpu_id):
 		import model
 		if 'model_path' in self.train_info:
@@ -85,13 +90,14 @@ class Logger(object):
 		return self._init_model(self._model_config(), gpu_id)
 
 	def save_model(self, model, model_path=None):
+		to_remove = None
 		if model_path is None:
 			# remove old
 			if 'model_path' in self.train_info:
 				model_path = os.path.join(self.logdir, self.train_info['model_path'])
 				if os.path.exists(model_path):
+					to_remove = model_path
 					print("Removing old model {}".format(self.train_info['model_path']))
-					os.remove(model_path)
 			# new path name
 			model_path = misc.datetimestr() + '.model.pth'
 			self.train_info['model_path'] = model_path
@@ -101,6 +107,9 @@ class Logger(object):
 			'state_dict': model.state_dict(),
 		}
 		torch.save(package, os.path.join(self.logdir, model_path))
+		if to_remove is not None:
+			os.remove(to_remove)
+
 
 	def copy_model(self, from_model, to_model):
 		to_model.load_state_dict(from_model.state_dict())

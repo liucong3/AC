@@ -69,16 +69,19 @@ class AlphaGoModel(nn.Module):
 		x = self.conv_in(x)
 		x = self.residual_blocks(x)
 		p = self.policy_head(x)
-		p_size = p.size()
-		p = p.view(p_size[0], -1)
-		p = F.softmax(p, dim=1)
-		p = p.view(p_size)
+		# p_size = p.size()
+		# p = p.view(p_size[0], -1)
+		# p = F.softmax(p, dim=1)
+		# p = p.view(p_size)
 		v = self.value_head(x)
 		return p, v
 
-	def loss(self, p, v, target_p, target_v):
-		batch_size = p.size(0)
-		p = p.view(batch_size, -1).log()
-		target_p = target_p.view(batch_size, -1)
-		return (((v - target_v) ** 2).sum() - (p * target_p).sum()) / batch_size
+	# def loss(self, p, v, target_p, target_v):
+	# 	batch_size = p.size(0)
+	# 	p = p.view(batch_size, -1).log()
+	# 	target_p = target_p.view(batch_size, -1)
+	# 	return (((v - target_v) ** 2).sum() - (p * target_p).sum()) / batch_size
 
+	def loss(self, p, v, target_p, target_v):
+		import torch.nn.functional as F
+		return F.cross_entropy(p.view(p.size(0), -1), target_p) + F.mse_loss(v, target_v)

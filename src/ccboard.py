@@ -194,7 +194,7 @@ def get_all_chess_man(player):
 		chess_man['pawn%d' % i] = Pawn(player, (x,3))
 	return chess_man
 
-def action_list_per_pos():
+def _action_list_per_pos():
 	a_list = []
 	chess_set = set()
 	for x in range(8):
@@ -220,23 +220,28 @@ def action_list_per_pos():
 			a_list.append((chess.chess_type, mv))
 	return a_list
 
+_a_list = _action_list_per_pos()
+
+def action_index(pos, action):
+	return action * 9 * 10 + pos[0] * 10 + pos[1]
+
 def chess_types():
 	return ['king', 'rock', 'knight', 'cannon', 'guard', 'bishop', 'pawn']
 
 _chess_id_map = None
 
-def get_chess_id_map():
-	global _chess_id_map
-	if _chess_id_map is None:
-		c_types = chess_types()
-		idx = 0
-		_chess_id_map = {}
-		players = ['Red', 'Black']
-		for p in players:
-			for t in c_types:
-				idx += 1
-				_chess_id_map[(p, t)] = idx
+def _get_chess_id_map():
+	c_types = chess_types()
+	idx = 0
+	_chess_id_map = {}
+	players = ['Red', 'Black']
+	for p in players:
+		for t in c_types:
+			idx += 1
+			_chess_id_map[(p, t)] = idx
 	return _chess_id_map
+
+_chess_id_map = _get_chess_id_map()
 
 class ChessBoard(object):
 
@@ -305,9 +310,7 @@ class ChessBoard(object):
 	# Each action is defined as an hash-able object
 	# This function return the set of all possible actions per position
 	def action_list(self):
-		if self.act_list is None:
-			self.act_list = action_list_per_pos()
-		return self.act_list
+		return _a_list
 
 	def take_action(self, chess_pos, action):
 		assert self.wins is None
@@ -356,7 +359,7 @@ class ChessBoard(object):
 
 	# A vectorized representaiton of the current board.
 	def nn_board_repr(self):
-		chess_id_map = get_chess_id_map()
+		chess_id_map = _chess_id_map
 		repr = torch.zeros(9, 10).long()
 		for pos, chess in self.board.items():
 			x, y = pos
@@ -366,20 +369,37 @@ class ChessBoard(object):
 	# Returns a list of actions corresponding to the neural network output,
 	# followed by a list of probabilities corresponding to each action
 	# Actions can be defined as arbitary type, consistant with @next_board
-	def nn_actions(self, nn_actions_repr):
-		size_a, size_x, size_y = nn_actions_repr.size()
+	# def nn_actions(self, nn_actions_repr):
+	# 	size_a, size_x, size_y = nn_actions_repr.size()
+	# 	actions = []
+	# 	policy = []
+	# 	a_list = self.action_list()
+	# 	for x in range(size_x):
+	# 		for y in range(size_y):
+	# 			for a in range(size_a):
+	# 				pos = (x, y)
+	# 				action = a_list[a]
+	# 				if self._valid_action_data(pos, action) is not None:
+	# 					actions.append((pos, a))
+	# 					policy.append(nn_actions_repr[a, x, y])
+	# 	return actions, policy
+
+	# Returns the list of valid moves, with move-ids corresponding to the neural network output
+	# Move-id is the position of an action in the linearized neural network output.
+	def nn_valid_actions(self):
+		size_a, size_x, size_y = len(_a_list), 9, 10
 		actions = []
-		policy = []
-		a_list = self.action_list()
+		action_indexes = []
 		for x in range(size_x):
 			for y in range(size_y):
 				for a in range(size_a):
 					pos = (x, y)
-					action = a_list[a]
+					action = _a_list[a]
 					if self._valid_action_data(pos, action) is not None:
 						actions.append((pos, a))
-						policy.append(nn_actions_repr[a, x, y])
-		return actions, policy
+						a_index = action_index(pos, a)
+						action_indexes.append(a_index)
+		return actions, torch.Tensor(action_indexes).long()
 
 	# return a json represetation
 	def state_dict(self):
