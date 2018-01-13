@@ -63,7 +63,15 @@ class Logger(object):
 		config['board_size'] = (self.args.board_width, self.args.board_height)
 		return config
 
-	def _init_model(self, model_config, gpu_id, state_dict=None):
+	@staticmethod
+	def lastest_model_path(logdir):
+		_, folders, _ = next(os.walk(logdir))
+		root, _, files = next(os.walk(os.path.join(logdir, folders[-1])))
+		files = [file for file in files if file.endswith('.pth')]
+		return os.path.join(root, files[-1])
+
+	@staticmethod
+	def _init_model(model_config, gpu_id, state_dict=None):
 		from model import AlphaGoModel
 		model_ = AlphaGoModel(**model_config)
 		if state_dict is not None:
@@ -72,10 +80,11 @@ class Logger(object):
 			model_ = model_.cuda(gpu_id)
 		return model_
 
-	def _load_model(self, path, gpu_id):
+	@staticmethod
+	def _load_model(path, gpu_id):
 		print('Loading model from: %s' % path)
 		package = torch.load(path, map_location=lambda storage, location: storage)
-		return self._init_model(package['config'], gpu_id, package['state_dict'])
+		return Logger._init_model(package['config'], gpu_id, package['state_dict'])
 
 	def get_model_path(self):
 		if 'model_path' not in self.train_info: return None
@@ -86,8 +95,8 @@ class Logger(object):
 		if 'model_path' in self.train_info:
 			model_path = os.path.join(self.logdir, self.train_info['model_path'])
 			if os.path.exists(model_path):
-				return self._load_model(model_path, gpu_id)
-		return self._init_model(self._model_config(), gpu_id)
+				return Logger._load_model(model_path, gpu_id)
+		return Logger._init_model(self._model_config(), gpu_id)
 
 	def save_model(self, model, model_path=None):
 		to_remove = None
@@ -115,7 +124,7 @@ class Logger(object):
 		to_model.load_state_dict(from_model.state_dict())
 
 	def clone_model(self, from_model, gpu_id):
-		to_model = self._init_model(self._model_config(), gpu_id)
+		to_model = Logger._init_model(self._model_config(), gpu_id)
 		self.copy_model(from_model, to_model)
 		return to_model
 

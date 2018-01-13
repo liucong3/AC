@@ -5,18 +5,17 @@ from helper import args, model_predict_train
 
 # exploration
 
-def try_reload_model(model_path, best_model, best_model_lock, gpu_id, proc_id, iters, logger):
+def try_reload_model(model_path, best_model, gpu_id, proc_id, iters):
 	import os
-	cur_model_path = logger.get_model_path()
+	from log import Logger
+	cur_model_path = Logger.lastest_model_path(args().logdir)
 	if best_model is None or model_path != cur_model_path:
 		model_path = cur_model_path
-		best_model_lock.acquire()
-		best_model = logger.create_model(gpu_id)
-		best_model_lock.release()
-		logger.info('Exploration GPU%d-%d it:%d %s model updated' % (gpu_id, proc_id, iters, misc.datetimestr()))
+		best_model = Logger._load_model(model_path, gpu_id)
+		print('Exploration GPU%d-%d it:%d %s model updated' % (gpu_id, proc_id, iters, misc.datetimestr()))
 	return model_path, best_model 
 
-def exploration_process_func(gpu_id, proc_id, queue, best_model_lock, logger):
+def exploration_process_func(gpu_id, proc_id, queue):
 	import numpy
 	numpy.random.seed(gpu_id * 101 + proc_id)
 	from mcts import exploration
@@ -26,20 +25,21 @@ def exploration_process_func(gpu_id, proc_id, queue, best_model_lock, logger):
 	iters = 0
 	while True:
 		iters += 1
-		model_path, best_model = try_reload_model(model_path, best_model, best_model_lock, gpu_id, proc_id, iters, logger)
+		model_path, best_model = try_reload_model(model_path, best_model, gpu_id, proc_id, iters)
 		history, _, _ = exploration(ccboard.ChessBoard(), [best_model, best_model], gpu_id, policy_noise_ratio=args().policy_noise_ratio)
-		logger.info('Exploration GPU%d-%d it:%d %s history_size:%d' % (gpu_id, proc_id, iters, misc.datetimestr(), len(history)))
+		print('Exploration GPU%d-%d it:%d %s history_size:%d' % (gpu_id, proc_id, iters, misc.datetimestr(), len(history)))
 		queue.put(history)
 
-def start_exploration_processes(queue, best_model_lock, logger):
-	import multiprocessing
+def start_exploration_processes(ctx, queue):
 	for gpu_id in args().exploration_gpus:
 		for proc_id in range(args().exploration_processes):
-			process = multiprocessing.Process(target=exploration_process_func, args=(gpu_id, proc_id, queue, best_model_lock, logger))
+			process = ctx.Process(target=exploration_process_func, args=(gpu_id, 1 + proc_id, queue))
 			process.daemon = True
 			process.start()
 
 # train
+
+epoch = 0
 
 def anneal_lr(optimizer, logger):
 	optim_state = optimizer.state_dict()
@@ -85,6 +85,7 @@ def _learn(x, target_p, target_v, has_cuda, gpu_id, optimizer, model, model_lock
 	return total_lost
 
 def train(replay_buffer, queue, model, model_lock, logger):
+	global epoch
 	parameters = model.parameters()
 	optimizer = torch.optim.SGD(parameters, lr=args().lr, momentum=args().momentum, nesterov=True)
 	has_cuda = torch.cuda.is_available()
@@ -119,7 +120,7 @@ def compare_models(iters, eval_model, best_model, gpu_id, logger):
 		logger.info("Evaluation %d:%d %s New model %s" % (iters, iters2, misc.datetimestr(), 'wins' if winner == 1 else 'lose'))
 	return wins / float(args().evaluation_games)
 
-def evaluation(iters, best_model, model, model_lock, best_model_lock, logger):
+def evaluation(iters, best_model, model, model_lock, logger):
 	has_cuda = torch.cuda.is_available()
 	gpu_id = args().train_gpu
 	model_lock.acquire()
@@ -128,20 +129,19 @@ def evaluation(iters, best_model, model, model_lock, best_model_lock, logger):
 	wins = compare_models(iters, eval_model, best_model, gpu_id, logger)
 	logger.info(">>> Evaluation %d %s New model wins %.0f%%" % (iters, misc.datetimestr(), wins * 100))
 	if wins < 0.55: return best_model
+	global epoch
 	best_model = eval_model
-	best_model_lock.acquire()
 	logger.train_info['epoch'] = epoch
 	logger.save_train_info()
 	logger.save_model(best_model)
-	best_model_lock.release()
 	return best_model
 
-def evaluation_thread_func(model, model_lock, best_model_lock, logger):
+def evaluation_thread_func(model, model_lock, logger):
 	iters = 0
 	best_model = model
 	while True:
 		iters += 1
-		best_model = evaluation(iters, best_model, model, model_lock, best_model_lock, logger)
+		best_model = evaluation(iters, best_model, model, model_lock, logger)
 
 def start_evaluation_threads(*args):
 	import threading
@@ -159,10 +159,10 @@ def main():
 	if logger.get_model_path() is None:
 		logger.save_model(model)
 
-	import multiprocessing
-	best_model_lock = multiprocessing.Lock()
-	queue = multiprocessing.Queue()
-	start_exploration_processes(queue, best_model_lock, logger)
+	import threading, queue, multiprocessing
+	ctx = multiprocessing.get_context('spawn')
+	queue = ctx.Queue()
+	start_exploration_processes(ctx, queue)
 
 	try:
 		replay_buffer = []
@@ -173,7 +173,7 @@ def main():
 			if length >= args().batch_size: break
 		import threading
 		model_lock = threading.Lock()
-		start_evaluation_threads(model, model_lock, best_model_lock, logger)
+		start_evaluation_threads(model, model_lock, logger)
 		train(replay_buffer, queue, model, model_lock, logger)
 	finally:
 		queue.close()

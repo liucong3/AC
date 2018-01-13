@@ -27,7 +27,7 @@ def parse_arguments():
 	parser.add_argument('--model_path', default='best.pth', help='Location to save best validation model')
 	parser.add_argument('--train_gpu', default=0, type=int, help='The single device used in training.')
 	parser.add_argument('--exploration_gpus', default='1,2', type=str, help='The GPU ids for the GPUs used for exploration.')
-	parser.add_argument('--exploration_processes', default=3, type=int, help='The number of exploration threads per gpu.')
+	parser.add_argument('--exploration_processes', default=5, type=int, help='The number of exploration threads per gpu.')
 	parser.add_argument('--epochs', default=1000000, type=int, help='Number of training epochs')
 	parser.add_argument('--lr', default=1e-3, type=float, help='initial learning rate')
 	parser.add_argument('--anneal_interval', default=100, type=int, help='Epochs between annealing is applied')
@@ -85,12 +85,15 @@ def model_predict_eval(model, x, valid_actions, has_cuda, gpu_id):
 	x = _get_input(x)
 	x = Variable(x, volatile=True)
 	p, v = model(x)
-	p = F.softmax(p.view(batch_size, -1))
+	p = F.softmax(p.view(batch_size, -1), dim=1)
 	p, v = p.data, v.data.view(-1)
 	p_list = []
 	for i in range(batch_size):
-		p1 = p[i].index_select(0, valid_actions2[i])
-		if has_cuda: p1 = p1.cpu()
+		if valid_actions2[i].dim() == 0:
+			p1 = torch.Tensor()
+		else:
+			p1 = p[i].index_select(0, valid_actions2[i])
+			if has_cuda: p1 = p1.cpu()
 		p_list.append(p1)
 	v_list = []
 	if has_cuda: v = v.cpu()
