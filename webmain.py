@@ -1,20 +1,19 @@
-import sys
+import sys, os
 sys.path.append('src')
 
 from helper import args
 args().logdir = 'src/log'
-args().continue_from = '20180103_151556'
+_, folders, _ = next(os.walk(args().logdir))
+args().continue_from = folders[-1]
 args().search_simulations = 16
 
 from log import Logger
-logger = Logger(args())
-model = logger.create_model()
+model_path = Logger.lastest_model_path(args().logdir)
+model = Logger._load_model(model_path, 0)
 
 global_user_info = {}
 
-
 ############################################################
-
 
 from pyramid.view import (view_config, view_defaults)
 
@@ -145,9 +144,7 @@ class Views:
 			'game_actions': reviewable_games,
 			'init_board': ChessBoard().state_dict() }
 
-
 ############################################################
-
 
 if __name__ == '__main__':
 	from pyramid.session import SignedCookieSessionFactory
